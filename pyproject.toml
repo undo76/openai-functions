@@ -11,6 +11,8 @@ python = "^3.10"
 openai = "^0.27.8"
 rich = "^13.4.2"
 
+[tool.poetry.scripts]
+chat = "openai_functions:main"
 
 [build-system]
 requires = ["poetry-core"]
