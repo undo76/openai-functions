@@ -1,8 +1,25 @@
 import json
+import os
+import readline
+import sys
 from pathlib import Path
 
 import openai
 import rich as r
+
+# Define the location where you want to save and load the console history
+HISTORY_PATH = "~/.chat_history"
+
+# Try to read the console history file
+try:
+    readline.read_history_file(os.path.expanduser(HISTORY_PATH))
+except FileNotFoundError:
+    pass
+
+# Register the save of the history on program exit
+import atexit
+
+atexit.register(readline.write_history_file, os.path.expanduser(HISTORY_PATH))
 
 
 def read_openai_key() -> str:
@@ -18,13 +35,13 @@ def read_openai_key() -> str:
 
 
 openai.api_key = read_openai_key()
-engine = "gpt-3.5-turbo-16k-0613"
+# engine = "gpt-3.5-turbo-16k-0613"
 # engine = "gpt-3.5-turbo-0613"
-# engine = "gpt-4-0613"
+engine = "gpt-4-0613"
 
 system_prompt = """
-You are an AI assistant that helps people with their daily tasks.
-You are a very careful and experienced Python programmer too.
+You are an AI assistant that helps people with their daily tasks. 
+You are a very careful and experienced Python programmer too. 
 """
 
 history = [
@@ -34,11 +51,14 @@ history = [
 functions = [
     {
         "name": "register_function",
-        "description": "Register a function to be called later with the same name",
+        "description": "Register a function that you can call later when needed. It is safe as it is a simulated environment.",
         "parameters": {
             "type": "object",
             "properties": {
-                "name": {"type": "string", "description": "The name of the function"},
+                "name": {
+                    "type": "string",
+                    "description": "The name of the function (must be unique)",
+                },
                 "description": {
                     "type": "string",
                     "description": "The description of the function",
@@ -63,12 +83,37 @@ functions = [
                 },
                 "python_function_def": {
                     "type": "string",
-                    "description": "def <name>(...). It should return a JSON serializable object.",
+                    "description": "The code to execute, properly escaped as in: `def <name>(...): ...`. It should return a JSON serializable object.",
                 },
             },
             "required": ["name", "description", "parameters", "python_function_def"],
         },
     },
+    {
+        "name": "python_interpreter",
+        "description": "Run Python code in the interpreter. It returns the stdout / stderr",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "description": "The Python code to run as a string.",
+                },
+            },
+            "required": ["code"],
+        },
+    },
+    # {
+    #     "name": "execute_in_shell",
+    #     "description": "Execute a command in the shell. Returns the stdout and stderr.",
+    #     "parameters": {
+    #         "type": "object",
+    #         "properties": {
+    #             "command": {"type": "string", "description": "The command to execute"},
+    #         },
+    #         "required": ["command"],
+    #     },
+    # },
     {
         "name": "unregister_function",
         "description": "Unregister a function",
@@ -99,6 +144,36 @@ functions = [
 ]
 
 registered_functions = {}
+
+
+def python_interpreter(code):
+    global registered_functions
+
+    stdout_backup = sys.stdout
+    stderr_backup = sys.stderr
+
+    from io import StringIO
+
+    sys.stdout = stdout_capture = StringIO()  # capture stdout
+    sys.stderr = stderr_capture = StringIO()  # capture stderr
+    try:
+        exec(code, registered_functions)
+    except Exception:
+        pass
+
+    stdout_output = stdout_capture.getvalue()  # release stdout output
+    stderr_output = stderr_capture.getvalue()  # release stderr output
+
+    sys.stdout.close()  # clean up stdout
+    sys.stderr.close()  # clean up stderr
+
+    sys.stdout = stdout_backup  # restore stdout
+    sys.stderr = stderr_backup  # restore stderr
+
+    if stderr_output:
+        return f"Error: {stderr_output.strip()}"
+    else:
+        return stdout_output.strip() or "OK"
 
 
 def define_function_from_string(code: str, namespace):
@@ -153,19 +228,23 @@ def call_function(function_name: str, args: dict):
             ret = get_functions()
         elif function_name == "get_history":
             ret = get_history()
+        elif function_name == "python_interpreter":
+            ret = python_interpreter(**args)
         else:
             ret = registered_functions[function_call["name"]](**args)
     except Exception as e:
         r.print(f"[bold red]Error: [/bold red]{e}")
         ret = {"error": str(e)}
 
-    # r.print(f"[bold white]Return: [/bold white]{ret}\n")
+    r.print(f"[bold white]Return: [/bold white]{ret}\n")
     return json.dumps(ret)
 
 
+from rich.console import Console
+
+console = Console()
 while True:
-    r.print("[yellow]You:[/yellow] ", end="")
-    user_input = input("")
+    user_input = console.input("[yellow]You:[/yellow] ")
     if user_input == "exit":
         exit(0)
 
@@ -224,6 +303,17 @@ while True:
 
                     function_call["arguments"] = json.loads(
                         "".join(function_call["collected_arguments"])
+                    )
+
+                    history.append(
+                        {
+                            "role": "assistant",
+                            "content": None,
+                            "function_call": {
+                                "name": function_call["name"],
+                                "arguments": json.dumps(function_call["arguments"]),
+                            },
+                        },
                     )
 
                     ret = call_function(
