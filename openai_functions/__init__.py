@@ -91,13 +91,13 @@ functions = [
     },
     {
         "name": "python_interpreter",
-        "description": "Run Python code in the interpreter. It returns the stdout / stderr",
+        "description": "Exec Python code in the interpreter. It should write the result to stdout to be consumed.",
         "parameters": {
             "type": "object",
             "properties": {
                 "code": {
                     "type": "string",
-                    "description": "The Python code to run as a string.",
+                    "description": "The Python code to run, it writes the desired result to stdout (print).",
                 },
             },
             "required": ["code"],
